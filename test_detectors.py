@@ -1,4 +1,5 @@
 import detectors
+import generator
 from generator import DnsEvent
 
 
@@ -34,6 +35,27 @@ def test_beaconing_flags_fixed_interval_repeats():
         )
         scores.append(detectors.score_beaconing(event))
     assert scores[-1] == 1.0  # enough regular-interval hits accumulated
+
+
+def test_due_beacon_events_recur_on_a_stable_client_and_domain_per_zone():
+    # generator.next_batch used to pick a fresh random client_id+kind for
+    # "beaconing" every event, so score_beaconing's fixed-interval check
+    # (proven by test_beaconing_flags_fixed_interval_repeats above) never
+    # actually saw a repeated (client_id, qname) pair in practice. This
+    # checks the fix: a scheduled, stable pair per zone, spaced out in time.
+    zone = generator.ZONES[0]
+    generator._next_beacon_at[zone] = 0.0
+    first = [e for e in generator._due_beacon_events() if e.client_zone == zone]
+    assert len(first) == 1
+    assert first[0].true_label == "beaconing"
+
+    # not due again immediately -- scheduling actually spaces check-ins out
+    assert all(e.client_zone != zone for e in generator._due_beacon_events())
+
+    generator._next_beacon_at[zone] = 0.0
+    second = [e for e in generator._due_beacon_events() if e.client_zone == zone]
+    assert second[0].client_id == first[0].client_id == generator._BEACON_HOST[zone]
+    assert second[0].qname == first[0].qname
 
 
 def test_classify_candidate_returns_none_for_benign_traffic():

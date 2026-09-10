@@ -77,14 +77,18 @@ def _dga_domain() -> str:
 def _typosquat_domain() -> str:
     brand = random.choice(_BRANDS)
     name, tld = brand.rsplit(".", 1)
-    i = random.randrange(len(name))
+    # only mutate real label chars -- name can itself contain a "." for a
+    # compound-TLD brand like "banrural.com.gt" (name="banrural.com" here),
+    # and mutating that embedded dot would produce a malformed domain.
+    indices = [k for k, ch in enumerate(name) if ch != "."]
+    i = random.choice(indices)
     op = random.choice(["swap", "drop", "dup"])
     if op == "drop" and len(name) > 3:
         mutated = name[:i] + name[i + 1:]
     elif op == "dup":
         mutated = name[:i] + name[i] + name[i:]
     else:
-        j = random.randrange(len(name))
+        j = random.choice(indices)
         chars = list(name)
         chars[i], chars[j] = chars[j], chars[i]
         mutated = "".join(chars)
@@ -99,6 +103,28 @@ def _tunneling_domain(client_id: str) -> str:
 def _beaconing_domain(client_id: str) -> str:
     # fixed C2 domain per client, queried at regular intervals by the caller
     return f"c2-{client_id[-4:]}.dynupdate.top"
+
+
+# ponytail: beaconing is a *scheduled* pattern, not a random one-off like the
+# other three attack kinds -- picking a random client+kind per event (like
+# next_batch does for dga/typosquat/tunneling) never reproduces the fixed
+# check-in interval detectors.score_beaconing looks for. One infected host
+# per zone, checking in on a fixed clock, is the minimum that actually
+# triggers the detector.
+_BEACON_INTERVAL_S = 8.0  # well inside detectors._BEACON_WINDOW_S (3600s)
+_BEACON_HOST = {zone: f"{zone}-beacon-host" for zone in ZONES}
+_next_beacon_at: dict[str, float] = {zone: 0.0 for zone in ZONES}
+
+
+def _due_beacon_events() -> list[DnsEvent]:
+    now = time.time()
+    events = []
+    for zone in ZONES:
+        if now >= _next_beacon_at[zone]:
+            client_id = _BEACON_HOST[zone]
+            events.append(_make_event(zone, client_id, _beaconing_domain(client_id), "A", "beaconing"))
+            _next_beacon_at[zone] = now + _BEACON_INTERVAL_S
+    return events
 
 
 def _make_event(zone: str, client_id: str, qname: str, qtype: str, true_label: str) -> DnsEvent:
@@ -124,22 +150,23 @@ def _next_benign(zone: str, client_id: str) -> DnsEvent:
 
 
 def next_batch(n: int = 20, adversarial_rate: float = 0.08) -> list[DnsEvent]:
-    """Return n events. ~adversarial_rate of them are synthetic attack traffic;
-    the rest are the benign backbone (real capture if present, else synthetic)."""
-    events = []
+    """Return n events plus any due scheduled beacon check-ins. ~adversarial_rate
+    of the n are synthetic dga/typosquat/tunneling traffic; beaconing is
+    scheduled separately (see _due_beacon_events) since it's a fixed-interval
+    pattern, not a random one-off. The rest are the benign backbone (real
+    capture if present, else synthetic)."""
+    events = _due_beacon_events()
     for _ in range(n):
         zone = random.choice(ZONES)
         client_id = _synthetic_client_id(zone)
         if random.random() < adversarial_rate:
-            kind = random.choice(["dga", "typosquat", "tunneling", "beaconing"])
+            kind = random.choice(["dga", "typosquat", "tunneling"])
             if kind == "dga":
                 events.append(_make_event(zone, client_id, _dga_domain(), "A", "dga"))
             elif kind == "typosquat":
                 events.append(_make_event(zone, client_id, _typosquat_domain(), "A", "typosquat"))
-            elif kind == "tunneling":
-                events.append(_make_event(zone, client_id, _tunneling_domain(client_id), "TXT", "tunneling"))
             else:
-                events.append(_make_event(zone, client_id, _beaconing_domain(client_id), "A", "beaconing"))
+                events.append(_make_event(zone, client_id, _tunneling_domain(client_id), "TXT", "tunneling"))
         else:
             events.append(_next_benign(zone, client_id))
     return events

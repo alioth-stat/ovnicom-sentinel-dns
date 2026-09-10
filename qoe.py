@@ -4,7 +4,10 @@ Same weighted-sum-then-bucket shape as Philips' confidence.py."""
 _LATENCY_TARGET_MS = 30.0  # at/below this, latency component is a perfect 1.0
 _LATENCY_CEILING_MS = 150.0  # at/above this, latency component bottoms out at 0.0
 _NXDOMAIN_CEILING = 0.15  # rate at/above this bottoms the NXDOMAIN component out at 0.0
-_CAPACITY_QPS = 50.0  # queries/sec a zone is provisioned for; above this, saturation degrades the score
+_CAPACITY_QPS = 4.0  # queries/sec a zone is provisioned for; above this, saturation degrades the score
+# ponytail: sized to this demo's actual throughput (BATCH_SIZE/TICK_SECONDS
+# spread over 5 zones, ~3-4 qps/zone) rather than a real POP's capacity, so
+# the saturation term actually responds instead of pinning at 1.0 forever.
 
 
 def _clamp01(x: float) -> float:

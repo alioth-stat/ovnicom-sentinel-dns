@@ -84,23 +84,24 @@
 }
 
 .dark {
-    --background: #0b1220;
-    --foreground: #e2e8f0;
-    --card: #0f172a;
-    --card-foreground: #e2e8f0;
-    --popover: #0f172a;
-    --popover-foreground: #e2e8f0;
-    --primary: #60a5fa;
-    --primary-foreground: #0b1220;
+    color-scheme: dark;
+    --background: #050a16;
+    --foreground: #f8fafc;
+    --card: #0a1526;
+    --card-foreground: #f8fafc;
+    --popover: #0a1526;
+    --popover-foreground: #f8fafc;
+    --primary: #7dd3fc;
+    --primary-foreground: #050a16;
     --secondary: #0c4a6e;
     --secondary-foreground: #e0f2fe;
-    --muted: #1e293b;
-    --muted-foreground: #94a3b8;
-    --accent: #1e3a5f;
+    --muted: #101f36;
+    --muted-foreground: #8fa8c7;
+    --accent: #14304f;
     --accent-foreground: #bae6fd;
     --destructive: oklch(0.704 0.191 22.216);
-    --border: #1e3a5f;
-    --input: #1e3a5f;
+    --border: #16304f;
+    --input: #16304f;
     --ring: #38bdf8;
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
@@ -115,6 +116,14 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+}
+
+/* Slow horizontal drift for the wave background layers -- each layer is the
+   wave shape drawn twice back-to-back, translated exactly -50% so the loop
+   seam is invisible. */
+@keyframes wave-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
 }
 
 @layer base {
