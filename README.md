@@ -25,16 +25,45 @@ Clientes", reto Philips). Específicamente:
   balde). La forma de `extract.py` → se convirtió en `qvac_judge.py` (salida JSON forzada
   por schema + reintento corto ante salida malformada).
 - Frontend: `Background.tsx`, `GlassPanel.tsx` y sus dependencias (`lib/utils.ts`,
-  `lib/motion.ts`, `hooks/use-prefers-reduced-motion.ts`, `index.css`, `main.tsx`,
-  `vite.config.ts`, configuración de TypeScript, `package.json`), además de los primitivos
-  genéricos de shadcn `ui/badge.tsx` y `ui/table.tsx`. **No** se reutilizó `StepShell.tsx`
-  (el asistente de pasos deslizantes de Philips) — esta app es un dashboard en vivo, no un
-  flujo de varios pasos.
+  `hooks/use-prefers-reduced-motion.ts`, `index.css`, `main.tsx`, `vite.config.ts`,
+  configuración de TypeScript, `package.json`), además de los primitivos genéricos de
+  shadcn `ui/badge.tsx` y `ui/table.tsx`. **No** se reutilizó `StepShell.tsx` (el asistente
+  de pasos deslizantes de Philips) — esta app es un dashboard en vivo, no un flujo de
+  varios pasos.
 
 Más detalle sobre el origen de esta base en
 [`../Phillips/context/README.md`](../Phillips/context/README.md). El repositorio es
 independiente (historia de git propia), por decisión explícita del equipo, aunque comparte
 código base con la submission de Philips.
+
+## Cómo funciona
+
+1. **Captura**: el agente se conecta como consumidor adicional del stream de telemetría DNS.
+   Si `data/dns_logs/` tiene el dataset real provisto por Ovnicom, reproduce esas consultas;
+   si no, sintetiza tráfico benigno. En ambos casos nunca toca el pipeline de producción, que
+   no existe en este prototipo.
+2. **Heurísticos**: reglas baratas (entropía del nombre de dominio, distancia difusa a
+   marcas conocidas, intervalos de repetición fijos) deciden qué dominios ameritan gastar
+   una llamada al modelo.
+3. **Veredicto QVAC**: solo los candidatos ya filtrados llegan a un modelo pequeño
+   (Qwen3-1.7B-Instruct) cargado vía QVAC, que confirma, descarta o reclasifica la sospecha
+   con un nivel de confianza y una explicación en español.
+4. **Alerta**: todo veredicto distinto de "benigno" se guarda en sqlite y se escribe como
+   línea JSON en `wazuh_alerts.log`, en el formato que un agente Wazuh real consume
+   directamente.
+5. **QoE**: en paralelo, cada zona acumula una ventana móvil de eventos y calcula un score
+   (latencia + tasa de NXDOMAIN + saturación) mediante una fórmula fija, sin usar ningún
+   modelo.
+6. **Panel**: un dashboard React muestra ambas salidas en vivo, con un panel de
+   Transparencia y glosario, y un selector de idioma para la interfaz.
+
+## Requisito técnico cumplido
+
+Toda la clasificación (`qvac_judge.classify`) corre localmente a través de `tetherto.qvac_sdk`
+(`qvac_client.py`), sin ninguna llamada a un endpoint de inferencia en la nube. El código no
+importa ningún cliente HTTP (`requests`/`urllib`/`httpx`) ni abre sockets salientes. La única
+cadena de red en todo el backend es la configuración de CORS hacia `http://localhost:5173`.
+El SDK de QVAC habla con el worker local vía IPC, nunca hacia afuera.
 
 ## Qué es real y qué es simulado
 
@@ -44,25 +73,42 @@ Nada de esa infraestructura se instaló para este prototipo; en su lugar:
 | Componente real de Ovnicom | Cómo se representa aquí |
 |---|---|
 | BIND9 + dnstap (captura de queries) | `bind_log.py` parsea líneas reales de `named.log` (formato `queries: info: client ...`) cuando hay un dataset en `data/dns_logs/`; si no, `generator.py` sintetiza tráfico benigno. En ambos casos, tráfico adversarial (DGA/typosquat/tunneling/beaconing) siempre se sintetiza y se mezcla encima, tal como pide el reto ("los datos de entrada son sintéticos... dominios DGA de listas públicas, tráfico normal simulado"). |
-| Vector / Kafka (bus de eventos) | `pipeline.run_forever()` — una tarea de fondo en el mismo proceso FastAPI que lee del generador en batches, actuando como el "consumidor adicional" que el reto exige, sin tocar ningún pipeline de producción real (que no existe en este prototipo). |
-| ClickHouse (almacenamiento) | `db.py` — sqlite local (`alerts`, `qoe_snapshots`). |
+| Vector / Kafka (bus de eventos) | `pipeline.run_forever()`, una tarea de fondo en el mismo proceso FastAPI que lee del generador en batches, actuando como el "consumidor adicional" que el reto exige. |
+| ClickHouse (almacenamiento) | `db.py`, sqlite local (`alerts`, `qoe_snapshots`). |
 | Grafana (visualización) | El dashboard React (`frontend/`), con polling cada 3s sobre `/api/alerts` y `/api/qoe`. |
-| Wazuh (SIEM) | No se levantó un manager de Wazuh real. `wazuh_sink.py` escribe cada alerta confirmada como una línea JSON en `wazuh_alerts.log`, en el formato que un agente Wazuh real con `<localfile><log_format>json</log_format>` consume directamente — es un patrón de integración soportado de verdad, no un stand-in inventado. |
+| Wazuh (SIEM) | No se levantó un manager de Wazuh real. `wazuh_sink.py` escribe cada alerta confirmada como una línea JSON en `wazuh_alerts.log`, en el formato que un agente Wazuh real con `<localfile><log_format>json</log_format>` consume directamente: un patrón de integración soportado de verdad, no un stand-in inventado. |
 
 El dataset real (`data/dns_logs/`, provisto por Ovnicom vía un enlace privado de SharePoint
-referenciado en el brief del reto) **no está incluido en este repositorio** — son 721MB de
+referenciado en el brief del reto) **no está incluido en este repositorio**: son 721MB de
 logs de BIND9 reales/realistas, sin redistribuir libremente, y están en `.gitignore`. Sin
 ese directorio poblado, el proyecto corre en modo 100% sintético, lo cual está
 explícitamente permitido por las reglas del reto.
 
-## Requisito técnico: inferencia 100% on-device
+## Interfaz
 
-Toda la clasificación (`qvac_judge.classify`) corre localmente a través de `tetherto.qvac_sdk`
-(`qvac_client.py`), sin ninguna llamada a un endpoint de inferencia en la nube. El código no
-importa ningún cliente HTTP (`requests`/`urllib`/`httpx`) ni abre sockets salientes — la
-única cadena de red en todo el backend es la configuración de CORS hacia
-`http://localhost:5173`. El SDK de QVAC habla con el worker local vía IPC, nunca hacia
-afuera.
+Un dashboard React de una sola pantalla (Vite + TypeScript + Tailwind + shadcn/ui) que
+consume el backend FastAPI por polling cada 3 segundos. Dos paneles con efecto de vidrio
+(`GlassSurface`, componente de React Bits) muestran las alertas de seguridad y la
+experiencia de red por zona, sobre un fondo animado de olas degradadas (`GradientWaves`,
+también de React Bits, renderizado en WebGL vía `ogl`). Toda la interfaz alterna entre
+español e inglés con un botón ES/EN; el contenido que genera el modelo (dominio, veredicto,
+motivo) siempre queda en español, ya que así fue instruido.
+
+![Alertas de seguridad clasificadas en vivo](docs/screenshots/dashboard-alerts.jpg)
+
+Cada alerta muestra hora, zona, dominio, veredicto con nivel de confianza, y el motivo que
+dio QVAC en español.
+
+![Experiencia de red por zona](docs/screenshots/dashboard-qoe.jpg)
+
+El score de QoE por zona, con estados healthy / watch / degraded a simple vista.
+
+![Panel de Transparencia y glosario](docs/screenshots/transparency-panel.jpg)
+
+Un botón abre un panel lateral de **Transparencia y glosario** que explica, en lenguaje
+simple, cómo funciona el sistema paso a paso y qué significa cada término técnico en
+pantalla, pensado directamente para el criterio del jurado de que el score sea
+"interpretable por un operador de red, no solo por quien lo programó".
 
 ## Instalación
 
@@ -94,8 +140,8 @@ Levanta backend (`:8000`) y frontend (`:5173`) juntos, Ctrl+C detiene ambos. Abr
 cd frontend && npm run dev                       # terminal 2
 ```
 
-La primera clasificación tarda más (carga en frío del modelo, ~50s en hardware modesto) —
-la tabla de alertas se ve vacía hasta entonces, esto es esperado.
+La primera clasificación tarda más (carga en frío del modelo, ~50s en hardware modesto): la
+tabla de alertas se ve vacía hasta entonces, esto es esperado.
 
 ## Tests
 
@@ -104,7 +150,7 @@ la tabla de alertas se ve vacía hasta entonces, esto es esperado.
 ```
 
 Prueban la lógica pura de los heurísticos (DGA/typosquat/tunneling/beaconing), el
-scheduler de beaconing, y los tres estados del score de QoE — no requieren cargar ningún
+scheduler de beaconing, y los tres estados del score de QoE. No requieren cargar ningún
 modelo, corren offline y en milisegundos.
 
 ## Estructura
@@ -140,9 +186,24 @@ modelo, corren offline y en milisegundos.
   específica de esta implementación, y un ajuste de umbral no la elimina sin también
   perder detecciones reales.
 - Con el tráfico sintético a este ritmo de demo, el componente de saturación del score de
-  QoE rara vez domina el resultado frente a latencia/NXDOMAIN — está calibrado para
+  QoE rara vez domina el resultado frente a latencia/NXDOMAIN: está calibrado para
   responder si el tráfico de una zona supera su capacidad configurada, pero no está
   garantizado que eso ocurra dentro de una demo corta.
+
+## Guión de demo (para el video)
+
+1. Mostrar el dashboard justo después de `./run.sh`, con la tabla de alertas vacía
+   (~50s de carga en frío del modelo) — deja claro que corre sobre un stream en vivo, no un
+   archivo estático.
+2. Desconectar la red de la máquina en cámara antes de que aparezca la primera alerta, como
+   prueba visible de que ninguna consulta sale del edificio.
+3. Esperar a que aparezca al menos una alerta de cada tipo (dga, typosquat, tunneling,
+   beaconing) con su motivo en español.
+4. Mostrar la tabla de QoE con las 5 zonas, señalando la zona en estado degraded.
+5. Abrir el panel de Transparencia y glosario: el "Cómo funciona" paso a paso y una
+   definición del glosario.
+6. `tail -f wazuh_alerts.log` en una terminal, mostrando una línea JSON real.
+7. Mencionar explícitamente la declaración de reuso de la base de Philips.
 
 ## Fuera de alcance (deliberado)
 
