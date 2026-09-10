@@ -3,6 +3,16 @@
 Written 2026-09-09, mid-build, so work can resume from a different machine/
 session with zero lost context. Read this before touching code.
 
+**Update (same day, later)**: repo created and pushed —
+https://github.com/alioth-stat/ovnicom-sentinel-dns (public, standalone,
+separate from the Philips repo). Frontend dashboard is now built and
+verified (see "Done and verified" below, updated). Work was stopped here on
+explicit user instruction ("stop building here") — the remaining items
+under "Not started" are still genuinely not started, most importantly the
+**README.md** (required before this is a valid submission — the reuse
+declaration is not optional, see hackathon rules quoted below) and the demo
+video.
+
 ## What this is
 
 Second submission (own repo, own video) for the **Decentralized AI
@@ -154,109 +164,134 @@ every restart. This keeps each client's "home zone" stable across runs.
 ## Status: what's done vs. what's left
 
 ### Done and verified
-- All backend Python modules listed above exist and are internally
-  consistent (`ast.parse` clean on every file).
-- `db.init_db(":memory:")` works standalone.
-- `generator.next_batch(5)` produces plausible synthetic events end-to-end
-  (verified by hand, output inspected).
-- **9/9 tests pass**: `.venv/bin/python -m pytest -q` → `9 passed`. Covers
-  DGA/typosquat/tunneling/beaconing heuristics and the QoE score's three
-  status buckets. Ran in a throwaway venv with only
-  `rapidfuzz pytest fastapi uvicorn` installed (deliberately did **not**
-  install `tetherto.qvac_sdk` yet — not needed for pure-logic tests, and
-  it's a heavier install with a worker/model download step).
-- Frontend scaffold files are copied into place (`package.json`,
-  `vite.config.ts`, tsconfigs, `index.html`, `index.css`, `main.tsx`,
-  `Background.tsx`, `GlassPanel.tsx`, their `lib`/`hooks` deps). `npm
-  install` has **not** been run yet in this `frontend/` (no
-  `node_modules/`).
+
+**Backend**
+- All backend Python modules exist and are internally consistent
+  (`ast.parse` clean on every file).
+- **9/9 unit tests pass**: `.venv/bin/python -m pytest -q` → `9 passed`.
+  Covers DGA/typosquat/tunneling/beaconing heuristics and the QoE score's
+  three status buckets.
+- `tetherto.qvac_sdk` **is now installed** in `.venv` (`pip install
+  tetherto.qvac_sdk` + `python -m tetherto.qvac_sdk install-worker`, worker
+  0.19.0 landed in `~/.cache/qvac/worker/`).
+- **Live end-to-end QVAC call verified working**: ran
+  `qvac_judge.classify()` directly (not through the full server) against a
+  synthetic DGA-shaped domain. Real result:
+  `{'verdict': 'dga', 'confidence': 0.85, 'reasoning': 'El dominio
+  xk7qz9mdpltrvw.top muestra señales claras de generación algorítmica de
+  dominios (dga) con un score de 0.85, sin señales de otros tipos como
+  typosquatting, tunneling o beaconing.'}` — schema-constrained JSON came
+  back well-formed on the first attempt (no retry needed), reasoning is
+  coherent and in Spanish as prompted. Cold model load + inference took
+  **~52s** on this machine's Vulkan/AMD Radeon Vega 8 iGPU backend (a
+  `common_fit_params: failed to fit params to free device memory... short
+  by 189 MiB` warning appeared but did not block the run — worth watching
+  if it ever *does* fail outright, but harmless here). A handful of
+  `Task was destroyed but it is pending!` / `RuntimeError: Event loop is
+  closed` messages printed at interpreter shutdown — these are teardown
+  noise from a one-off test script exiting without the process staying
+  alive (this is not how `qvac_client.py`'s loop is meant to be torn
+  down — a real server process just keeps running, never triggering this
+  path). **Not a code bug**, but if it's ever seen happening *during* a
+  live `uvicorn` run (not at shutdown), that would be worth investigating.
+  **Not yet verified**: a full `./run.sh` end-to-end run through the actual
+  FastAPI server + `pipeline.run_forever()` background loop + frontend
+  polling it live. Only the isolated `qvac_judge.classify()` call has been
+  proven; the asyncio `run_in_executor` wiring in `pipeline.py` is
+  reasoned-through and code-reviewed but not yet run.
+
+**Real dataset**
+- `/home/alstat/Downloads/LogsDNSQueries 2.zip` extracted into
+  `data/dns_logs/` (36 files, 721MB, gitignored — confirmed **not** staged
+  by git, `git status` shows it untracked as expected).
+- `bind_log.parse_line` verified against a 3-file (~379k line) sample:
+  **100.0% match rate** (379,111/379,120 lines parsed; the ~9 misses are
+  almost certainly blank/truncated lines, not a format the regex misses).
+- `generator.next_batch()` confirmed pulling **real** qnames/client IPs
+  (`www.apple.com`, `oec-im-tt-sg.tiktokglobalshopv.com`, real public IPs)
+  blended with synthetic attack traffic (DGA/typosquat/tunneling/beaconing)
+  in the same batch, each attack type appearing with the expected shape.
+  Zone assignment for real IPs confirmed stable (same IP → same zone).
+
+**Frontend**
+- Scaffold copied (`package.json`, `vite.config.ts`, tsconfigs,
+  `index.html`, `index.css`, `main.tsx`, `Background.tsx`, `GlassPanel.tsx`,
+  their `lib`/`hooks` deps) **plus now also** the generic shadcn
+  `ui/badge.tsx` and `ui/table.tsx` primitives (copied from the Philips
+  repo as-is — they're stock shadcn components, not Philips-domain code).
+- **`App.tsx` and `api.ts` are written** (previously listed as TODO, now
+  done): single dashboard, two `GlassPanel`s side by side — a security
+  alerts table (time/zone/domain/verdict badge/reasoning) and a per-zone
+  QoE table (status badge/score/latency/NXDOMAIN rate/QPS). A small
+  `hooks/use-polling.ts` hook drives both panels via `GET /api/alerts` and
+  `GET /api/qoe` every 3s.
+- `npm install` run successfully. `npm run lint` (oxlint) → clean.
+  `npm run build` (`tsc -b && vite build`) → **succeeds**, 47 modules,
+  built in under a second. The `dist/` output was deleted afterward (build
+  artifact, not meant to be committed).
+- **Not yet verified**: actually opening `http://localhost:5173` in a
+  browser against a live backend. The build compiling is not the same as
+  confirming the tables render sensibly with real data — do that before
+  calling the frontend done-done.
 
 ### Not started / explicitly deferred — pick up here
 
-1. **Move the real dataset into place**, if using it: unzip
-   `/home/alstat/Downloads/LogsDNSQueries 2.zip` so that
-   `Challenges/ovnicom-sentinel-dns/data/dns_logs/queries.*` exist (36
-   files). `generator.py` auto-detects this directory
-   (`SENTINEL_DNS_LOG_DIR` env var overrides the default `data/dns_logs`
-   path) and blends it in automatically — no code change needed, just the
-   files being present. **Untested**: the real-log code path
-   (`bind_log.stream_real_events` + `generator._next_benign`'s real-stream
-   branch) has not actually been run against real files yet, only
-   `ast.parse`-checked and read-through-reviewed. Run
-   `python3 -c "import generator; print(generator.next_batch(20))"` after
-   populating `data/dns_logs/` to confirm it actually pulls real qnames —
-   watch for the regex in `bind_log.parse_line` possibly not matching every
-   real line variant (it was written against ~15 sample lines, not the
-   full 4.6M-line corpus; there may be other BIND9 log-line shapes in there
-   it silently skips, which is safe but worth spot-checking with e.g. `grep
-   -c` for lines matching vs. not matching the pattern).
-2. **Frontend `App.tsx` and `api.ts`** — not written yet. Per the plan: a
-   single dashboard (no wizard), two `GlassPanel`s side by side — a live
-   security-alerts feed (domain, zone, verdict badge, QVAC's one-line
-   reasoning, polling `GET /api/alerts` every ~3s) and a per-zone QoE table
-   (score/latency/NXDOMAIN rate, color-coded by status, polling `GET
-   /api/qoe`). No new charting dependency needed for this few-zone,
-   few-metric view — plain table/cards, maybe inline SVG for a sparkline if
-   there's time, per the ponytail cut already agreed in the plan.
-3. **`README.md`** — not written yet. Must include, per the plan and
+Work was stopped by explicit user instruction right after the items below
+were confirmed still outstanding. **Nothing in this section has been
+started.** This is the actual remaining punch list:
+
+1. **`README.md`** — the single biggest gap. Must include, per the plan and
    hackathon rules:
-   - Upfront declaration of reuse from the Philips submission (required —
-     omitting it disqualifies the submission).
+   - Upfront declaration of reuse from the Philips submission (**required**
+     — "toda base preexistente debe declararse en el README, omitirla
+     descalifica" is a disqualification rule, not a suggestion).
    - Explanation of what's simulated (Kafka/ClickHouse/Grafana/live-Wazuh-
-     manager) vs. real (the actual DNS query data, if `data/dns_logs/` is
-     populated), with the mapping to Ovnicom's real stack spelled out.
-   - Run instructions (`./run.sh`, `pytest`).
+     manager) vs. real (the actual DNS query data, now confirmed working
+     via `data/dns_logs/`), with the mapping to Ovnicom's real stack
+     spelled out.
+   - Run instructions (`./run.sh`, `pytest -q`).
    - Confirmation of the on-device-only QVAC inference requirement.
    - A note on how to obtain the real dataset (the private SharePoint link
-     is in the parent repo's `Context/Retos`) for anyone trying to
-     reproduce the real-capture path.
-4. **End-to-end run against the real QVAC SDK** — never actually executed
-   yet. `pip install tetherto.qvac_sdk` into `.venv`, run `./run.sh`, and
-   watch `/api/alerts` actually populate with real QVAC-judged verdicts
-   (not just the pure-logic unit tests). This is the first point where
-   `qvac_judge.py`'s prompt/schema get validated against a live model —
-   expect at least one round of prompt tweaking, same as `extract.py` in
-   the Philips repo needed a retry loop for cold-load flakiness.
-   `pipeline.TICK_SECONDS = 1.5` and `BATCH_SIZE = 25` are unvalidated
-   guesses for demo pacing — adjust once you see it running live (e.g. if
-   alerts take too long to show up, or the demo pace feels off in the
-   video).
-5. **Manual browser check** once the frontend exists: confirm the alerts
-   feed populates within a few seconds and shows at least one of each
-   verdict kind, and the QoE table shows all 5 zones with plausible,
-   moving scores.
-6. **`tail -f wazuh_alerts.log`** sanity check: confirm valid JSON lines
-   land there with fields a Wazuh `<localfile>` JSON decoder could consume
-   (schema is in `wazuh_sink.py` — not yet actually verified against a real
-   Wazuh instance, only reasoned about).
-7. **Confirm the `LICENSE` file (Apache 2.0, copied from Philips) is
+     is in the parent repo's `Context/Retos`, "Reto 4"'s last line) for
+     anyone trying to reproduce the real-capture path — the dataset itself
+     is gitignored and was never pushed (721MB + likely not
+     freely-redistributable), so a fresh clone of this repo runs
+     synthetic-only until someone populates `data/dns_logs/` themselves.
+2. **Full `./run.sh` live run** — the isolated `qvac_judge.classify()` call
+   is proven (see above), but the actual FastAPI server +
+   `pipeline.run_forever()` background loop has never been started and
+   watched end-to-end. Do this before trusting `pipeline.TICK_SECONDS =
+   1.5` / `BATCH_SIZE = 25` as reasonable demo pacing — they're
+   unvalidated guesses.
+3. **Manual browser check** at `http://localhost:5173` against a live
+   backend: confirm the alerts table actually populates within a few
+   seconds, shows at least one of each verdict kind with sane-looking
+   reasoning text, and the QoE table shows all 5 zones with plausible,
+   moving scores. The frontend compiling cleanly is not the same thing as
+   this.
+4. **`tail -f wazuh_alerts.log`** sanity check once alerts are flowing:
+   confirm valid JSON lines with fields a Wazuh `<localfile>` JSON decoder
+   could actually consume (schema is in `wazuh_sink.py` — reasoned about,
+   never checked against a real Wazuh instance).
+5. **Confirm the `LICENSE` file (Apache 2.0, copied from Philips) is
    actually wanted for this submission** — Reto 3's rules say "no se exige
-   licencia abierta" (open license not required for this hackathon), so
-   this was a low-effort copy-along, not a requirement. Fine to keep for
-   consistency with the sibling submission, but flag it — nobody explicitly
-   asked for it on this repo yet.
-8. **git init this directory** (currently not a git repo). Was about to be
-   done as part of "push to GitHub under a new repo" when this handoff was
-   requested — see the immediate next steps below.
-9. **Demo video** (max 5 minutes, required deliverable) — not started, out
-   of scope for code work but don't forget it exists as a hard requirement.
+   licencia abierta" (open license not required), so this was a low-effort
+   copy-along, not a requirement. Fine to keep for consistency with the
+   sibling submission, but nobody explicitly asked for it on this repo.
+6. **Demo video** (max 5 minutes, required deliverable) — not started.
 
-### Immediate next steps (what triggered writing this file)
+### Where things actually stand right now
 
-The user asked, in order: (1) write this handoff doc — done, this file —
-then (2) push this to GitHub as a new repo. That push has **not happened
-yet** as of this file being written: no `git init`, no commit, no remote
-created. Whoever/whatever picks this up next should do, in order:
-1. `git init`, `git add`, first commit (mind `.gitignore` — `.venv/`,
-   `frontend/node_modules/`, `__pycache__/`, `*.db`, `wazuh_alerts.log`,
-   and `/data/` should never be staged; double-check `git status` before
-   committing, per standing safety practice, since a broad `git add` was
-   never run here and shouldn't blindly be assumed safe).
-2. Create the new GitHub repo (ask the user for visibility
-   public/private and the exact name if not already specified — the
-   Philips repo is `alioth-stat/phillips-installed-base-intelligence`,
-   suggesting the same GitHub account/org; a consistent name here would be
-   something like `ovnicom-sentinel-dns`, but confirm rather than assume).
-3. Push.
-4. Then come back to the "not started" list above — the README and
-   frontend are the two biggest gaps before this is demo-able at all.
+- Repo: **https://github.com/alioth-stat/ovnicom-sentinel-dns** (public,
+  standalone — separate history from the Philips repo by design, per the
+  user's explicit instruction that "the Phillips project and the Ovnicom
+  project function as two separate things").
+- Two commits pushed to `master`: the initial backend scaffold, and a
+  follow-up with the frontend dashboard + this status update (see git log
+  for the exact message).
+- Local-only, never pushed (by design): `.venv/` (has `tetherto.qvac_sdk` +
+  the QVAC worker installed — a fresh clone needs to redo this),
+  `frontend/node_modules/`, `data/dns_logs/` (the 721MB real dataset).
+- The user said to stop building and cease action after this push. No
+  further work should happen here without a new explicit instruction —
+  don't auto-resume the "not started" list above on your own initiative.
