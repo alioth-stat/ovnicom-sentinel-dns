@@ -128,9 +128,17 @@ modelo, corren offline y en milisegundos.
 - El modelo local usado para el veredicto final es pequeño (Qwen3-1.7B-Instruct); en
   pruebas en vivo, ocasionalmente reclasifica un candidato heurísticamente típico de
   `typosquat` como `dga` (ambos comparten señales de entropía/estructura a nivel de
-  heurístico). El veredicto sigue siendo válido y schema-correcto — es una imprecisión de
+  heurístico). El veredicto sigue siendo válido y schema-correcto. Es una imprecisión de
   subcategoría del modelo pequeño, no un fallo de detección: el dominio sospechoso igual
   genera una alerta.
+- El heurístico de DGA (`detectors.score_dga`) puntúa por entropía del nombre, lo que
+  también puede disparar en subdominios reales de infraestructura con nombres largos y
+  técnicos (confirmado en pruebas con el dataset real: por ejemplo
+  `api19-normal-c-alisg.tiktokv.com` y `cloud-meraki-asn.amp.cisco.com` recibieron un
+  veredicto `dga` de baja confianza). QVAC no siempre corrige este falso positivo del
+  heurístico. Es una limitación conocida de los detectores basados en entropía, no
+  específica de esta implementación, y un ajuste de umbral no la elimina sin también
+  perder detecciones reales.
 - Con el tráfico sintético a este ritmo de demo, el componente de saturación del score de
   QoE rara vez domina el resultado frente a latencia/NXDOMAIN — está calibrado para
   responder si el tráfico de una zona supera su capacidad configurada, pero no está
