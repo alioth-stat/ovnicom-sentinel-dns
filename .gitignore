@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+*.db
+.qvac/
+.streamlit/
+*.env
+.env
+
+# Ovnicom-provided real DNS query logs (721MB, from the challenge's private
+# SharePoint link) -- never committed. Drop them here to replay real traffic;
+# see README for the synthetic-only fallback when this is absent.
+/data/
+wazuh_alerts.log

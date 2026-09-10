@@ -1,0 +1,5 @@
+tetherto.qvac_sdk
+rapidfuzz
+pytest
+fastapi
+uvicorn
